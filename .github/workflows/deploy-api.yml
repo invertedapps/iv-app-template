@@ -1,0 +1,27 @@
+name: Deploy API
+on:
+  push:
+    branches: [main]
+    paths: ['apps/api/**']
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - run: |
+          gcloud run deploy ${{ secrets.CLOUD_RUN_SERVICE }} \
+            --source apps/api \
+            --project ${{ secrets.GCP_PROJECT_ID }} \
+            --region ${{ secrets.GCP_REGION }} \
+            --allow-unauthenticated \
+            --set-env-vars DATABASE_URL=${{ secrets.DATABASE_URL }} \
+            --set-env-vars PLATFORM_JWT_SECRET=${{ secrets.PLATFORM_JWT_SECRET }} \
+            --set-env-vars APP_SLUG=${{ secrets.APP_SLUG }} \
+            --min-instances 0 \
+            --max-instances 5

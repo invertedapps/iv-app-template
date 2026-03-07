@@ -1,0 +1,25 @@
+name: Deploy Frontend
+on:
+  push:
+    branches: [main]
+    paths: ['apps/desktop/**']
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20' }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @app/desktop build
+      - uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+      - uses: google-github-actions/upload-cloud-storage@v2
+        with:
+          path: apps/desktop/dist
+          destination: ${{ secrets.GCS_BUCKET }}/${{ secrets.APP_SLUG }}
+          parent: false

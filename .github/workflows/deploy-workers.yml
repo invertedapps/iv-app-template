@@ -1,0 +1,77 @@
+name: Deploy Workers
+on:
+  push:
+    branches: [main]
+    paths: ['workers/**', 'workers.yaml']
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20' }
+      - run: pnpm install --frozen-lockfile
+      # Parse workers.yaml and deploy each worker as a Cloud Function
+      - name: Deploy workers
+        run: |
+          if ! command -v yq &> /dev/null; then
+            sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+            sudo chmod +x /usr/local/bin/yq
+          fi
+
+          WORKER_COUNT=$(yq '.workers | length' workers.yaml)
+          if [ "$WORKER_COUNT" = "0" ] || [ "$WORKER_COUNT" = "null" ]; then
+            echo "No workers defined in workers.yaml — skipping"
+            exit 0
+          fi
+
+          for i in $(seq 0 $(($WORKER_COUNT - 1))); do
+            NAME=$(yq ".workers[$i].name" workers.yaml)
+            SCHEDULE=$(yq ".workers[$i].schedule" workers.yaml)
+            HANDLER=$(yq ".workers[$i].handler" workers.yaml)
+            TIMEOUT=$(yq ".workers[$i].timeout // \"60s\"" workers.yaml)
+            MEMORY=$(yq ".workers[$i].memory // \"256Mi\"" workers.yaml)
+
+            FUNC_NAME="${{ secrets.APP_SLUG }}-${NAME}"
+            echo "Deploying worker: ${FUNC_NAME}"
+
+            # Bundle the worker with esbuild
+            npx esbuild "${HANDLER}" --bundle --platform=node --target=node20 --outfile="dist-workers/${NAME}/index.js"
+
+            # Deploy as Cloud Function (Gen2)
+            gcloud functions deploy "${FUNC_NAME}" \
+              --gen2 \
+              --runtime=nodejs20 \
+              --trigger-http \
+              --source="dist-workers/${NAME}" \
+              --entry-point=handler \
+              --project=${{ secrets.GCP_PROJECT_ID }} \
+              --region=${{ secrets.GCP_REGION }} \
+              --memory="${MEMORY}" \
+              --timeout="${TIMEOUT}" \
+              --set-env-vars DATABASE_URL=${{ secrets.DATABASE_URL }} \
+              --set-env-vars PLATFORM_JWT_SECRET=${{ secrets.PLATFORM_JWT_SECRET }} \
+              --no-allow-unauthenticated
+
+            # Create or update Cloud Scheduler job
+            gcloud scheduler jobs update http "${FUNC_NAME}-schedule" \
+              --location=${{ secrets.GCP_REGION }} \
+              --schedule="${SCHEDULE}" \
+              --uri="$(gcloud functions describe ${FUNC_NAME} --gen2 --region=${{ secrets.GCP_REGION }} --format='value(serviceConfig.uri)')" \
+              --oidc-service-account-email="${{ secrets.GCP_SA_EMAIL }}" \
+              2>/dev/null || \
+            gcloud scheduler jobs create http "${FUNC_NAME}-schedule" \
+              --location=${{ secrets.GCP_REGION }} \
+              --schedule="${SCHEDULE}" \
+              --uri="$(gcloud functions describe ${FUNC_NAME} --gen2 --region=${{ secrets.GCP_REGION }} --format='value(serviceConfig.uri)')" \
+              --oidc-service-account-email="${{ secrets.GCP_SA_EMAIL }}"
+
+            echo "✅ Worker ${NAME} deployed and scheduled"
+          done
