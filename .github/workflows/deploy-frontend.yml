@@ -32,7 +32,7 @@ jobs:
       - name: Install and build
         if: steps.guard.outputs.skip != 'true'
         run: |
-          pnpm install --frozen-lockfile
+          pnpm install
           pnpm --filter @app/desktop build
 
       - uses: google-github-actions/auth@v2
