@@ -8,19 +8,40 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    # Only deploy when GCP credentials are configured (skip on template repo)
-    if: ${{ secrets.GCP_SA_KEY != '' }}
     steps:
+      - name: Check for deploy credentials
+        id: guard
+        run: |
+          if [ -z "$GCP_KEY" ]; then
+            echo "⏭️ No GCP_SA_KEY secret — skipping deployment"
+            echo "skip=true" >> $GITHUB_OUTPUT
+          fi
+        env:
+          GCP_KEY: ${{ secrets.GCP_SA_KEY }}
+
       - uses: actions/checkout@v4
+        if: steps.guard.outputs.skip != 'true'
+
       - uses: pnpm/action-setup@v4
+        if: steps.guard.outputs.skip != 'true'
+
       - uses: actions/setup-node@v4
+        if: steps.guard.outputs.skip != 'true'
         with: { node-version: '20' }
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter @app/desktop build
+
+      - name: Install and build
+        if: steps.guard.outputs.skip != 'true'
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm --filter @app/desktop build
+
       - uses: google-github-actions/auth@v2
+        if: steps.guard.outputs.skip != 'true'
         with:
           credentials_json: ${{ secrets.GCP_SA_KEY }}
+
       - uses: google-github-actions/upload-cloud-storage@v2
+        if: steps.guard.outputs.skip != 'true'
         with:
           path: apps/desktop/dist
           destination: ${{ vars.GCS_BUCKET }}/${{ vars.APP_SLUG }}

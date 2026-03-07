@@ -8,20 +8,41 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    # Only deploy when GCP credentials are configured (skip on template repo)
-    if: ${{ secrets.GCP_SA_KEY != '' }}
     steps:
+      - name: Check for deploy credentials
+        id: guard
+        run: |
+          if [ -z "$GCP_KEY" ]; then
+            echo "⏭️ No GCP_SA_KEY secret — skipping deployment"
+            echo "skip=true" >> $GITHUB_OUTPUT
+          fi
+        env:
+          GCP_KEY: ${{ secrets.GCP_SA_KEY }}
+
       - uses: actions/checkout@v4
+        if: steps.guard.outputs.skip != 'true'
+
       - uses: google-github-actions/auth@v2
+        if: steps.guard.outputs.skip != 'true'
         with:
           credentials_json: ${{ secrets.GCP_SA_KEY }}
+
       - uses: google-github-actions/setup-gcloud@v2
+        if: steps.guard.outputs.skip != 'true'
+
       - uses: pnpm/action-setup@v4
+        if: steps.guard.outputs.skip != 'true'
+
       - uses: actions/setup-node@v4
+        if: steps.guard.outputs.skip != 'true'
         with: { node-version: '20' }
-      - run: pnpm install --frozen-lockfile
-      # Parse workers.yaml and deploy each worker as a Cloud Function
+
+      - name: Install dependencies
+        if: steps.guard.outputs.skip != 'true'
+        run: pnpm install --frozen-lockfile
+
       - name: Deploy workers
+        if: steps.guard.outputs.skip != 'true'
         run: |
           if ! command -v yq &> /dev/null; then
             sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
@@ -44,10 +65,8 @@ jobs:
             FUNC_NAME="${{ vars.APP_SLUG }}-${NAME}"
             echo "Deploying worker: ${FUNC_NAME}"
 
-            # Bundle the worker with esbuild
             npx esbuild "${HANDLER}" --bundle --platform=node --target=node20 --outfile="dist-workers/${NAME}/index.js"
 
-            # Deploy as Cloud Function (Gen2)
             gcloud functions deploy "${FUNC_NAME}" \
               --gen2 \
               --runtime=nodejs20 \
@@ -62,7 +81,6 @@ jobs:
               --set-env-vars PLATFORM_JWT_SECRET=${{ secrets.PLATFORM_JWT_SECRET }} \
               --no-allow-unauthenticated
 
-            # Create or update Cloud Scheduler job
             gcloud scheduler jobs update http "${FUNC_NAME}-schedule" \
               --location=${{ vars.GCP_REGION }} \
               --schedule="${SCHEDULE}" \

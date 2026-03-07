@@ -8,15 +8,31 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    # Only deploy when GCP credentials are configured (skip on template repo)
-    if: ${{ secrets.GCP_SA_KEY != '' }}
     steps:
+      - name: Check for deploy credentials
+        id: guard
+        run: |
+          if [ -z "$GCP_KEY" ]; then
+            echo "⏭️ No GCP_SA_KEY secret — skipping deployment"
+            echo "skip=true" >> $GITHUB_OUTPUT
+          fi
+        env:
+          GCP_KEY: ${{ secrets.GCP_SA_KEY }}
+
       - uses: actions/checkout@v4
+        if: steps.guard.outputs.skip != 'true'
+
       - uses: google-github-actions/auth@v2
+        if: steps.guard.outputs.skip != 'true'
         with:
           credentials_json: ${{ secrets.GCP_SA_KEY }}
+
       - uses: google-github-actions/setup-gcloud@v2
-      - run: |
+        if: steps.guard.outputs.skip != 'true'
+
+      - name: Deploy to Cloud Run
+        if: steps.guard.outputs.skip != 'true'
+        run: |
           gcloud run deploy ${{ vars.CLOUD_RUN_SERVICE }} \
             --source apps/api \
             --project ${{ vars.GCP_PROJECT_ID }} \
