@@ -8,6 +8,8 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    # Only deploy when GCP credentials are configured (skip on template repo)
+    if: ${{ secrets.GCP_SA_KEY != '' }}
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -21,5 +23,5 @@ jobs:
       - uses: google-github-actions/upload-cloud-storage@v2
         with:
           path: apps/desktop/dist
-          destination: ${{ secrets.GCS_BUCKET }}/${{ secrets.APP_SLUG }}
+          destination: ${{ vars.GCS_BUCKET }}/${{ vars.APP_SLUG }}
           parent: false
