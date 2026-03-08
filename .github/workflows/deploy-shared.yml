@@ -94,9 +94,9 @@ jobs:
             --project ${{ vars.GCP_PROJECT_ID }} \
             --region ${{ vars.GCP_REGION }} \
             --allow-unauthenticated \
-            --set-env-vars DATABASE_URL=${{ steps.neon.outputs.database_url }} \
-            --set-env-vars PLATFORM_JWT_SECRET=${{ secrets.PLATFORM_JWT_SECRET }} \
-            --set-env-vars APP_SLUG=${{ needs.setup.outputs.app_slug }} \
+            --set-env-vars "DATABASE_URL=${{ steps.neon.outputs.database_url }}" \
+            --set-env-vars "PLATFORM_JWT_SECRET=${{ secrets.PLATFORM_JWT_SECRET }}" \
+            --set-env-vars "APP_SLUG=${{ needs.setup.outputs.app_slug }}" \
             --min-instances 0 \
             --max-instances 5
 
