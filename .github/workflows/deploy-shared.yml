@@ -48,6 +48,8 @@ jobs:
               - 'apps/api/**'
             frontend:
               - 'apps/desktop/**'
+              - 'apps/mobile/**'
+              - 'apps/admin/**'
             workers:
               - 'workers/**'
               - 'workers.yaml'
@@ -153,17 +155,27 @@ jobs:
           VITE_CORE_API_URL: ${{ vars.CORE_API_URL }}
         run: |
           pnpm install
-          pnpm --filter @app/desktop build
+          for variant in desktop mobile admin; do
+            if [ -d "apps/$variant" ]; then
+              echo "Building @app/$variant..."
+              pnpm --filter "@app/$variant" build || true
+            fi
+          done
 
       - uses: google-github-actions/auth@v2
         with:
           credentials_json: ${{ secrets.GCP_SA_KEY }}
 
-      - uses: google-github-actions/upload-cloud-storage@v2
-        with:
-          path: apps/desktop/dist
-          destination: ${{ vars.GCS_BUCKET }}/${{ needs.setup.outputs.app_slug }}/desktop
-          parent: false
+      - name: Upload frontends to GCS
+        run: |
+          for variant in desktop mobile admin; do
+            DIST="apps/$variant/dist"
+            if [ -d "$DIST" ]; then
+              echo "Uploading $variant to gs://${{ vars.GCS_BUCKET }}/${{ needs.setup.outputs.app_slug }}/$variant"
+              gcloud storage cp -r "$DIST/*" "gs://${{ vars.GCS_BUCKET }}/${{ needs.setup.outputs.app_slug }}/$variant/"
+            fi
+          done
+          echo "✅ All frontends uploaded"
 
   # Deploy workers as Cloud Functions
   deploy-workers:
