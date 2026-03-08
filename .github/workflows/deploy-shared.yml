@@ -67,6 +67,8 @@ jobs:
         env:
           NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
         run: |
+          echo "DEBUG NEON_API_KEY value: [$NEON_API_KEY]"
+          echo "DEBUG NEON_API_KEY length: ${#NEON_API_KEY}"
           NEON_PROJECT_NAME="iv-app-${{ needs.setup.outputs.app_slug }}"
           echo "Looking up Neon project: $NEON_PROJECT_NAME"
 
