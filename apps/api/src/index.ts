@@ -68,7 +68,7 @@ const schema = createSchema({
 });
 
 const yoga = createYoga({
-    schema,
+    schema: schema as any,
     context: ({ request }) => ({
         user: (request as any).user ?? null,
         prisma,
