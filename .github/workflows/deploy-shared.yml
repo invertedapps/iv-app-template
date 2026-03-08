@@ -64,12 +64,14 @@ jobs:
 
       - name: Fetch DATABASE_URL from Neon
         id: neon
+        env:
+          NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
         run: |
           NEON_PROJECT_NAME="iv-app-${{ needs.setup.outputs.app_slug }}"
           echo "Looking up Neon project: $NEON_PROJECT_NAME"
 
           # Find the project by name
-          PROJECT_ID=$(curl -s -H "Authorization: Bearer ${{ secrets.NEON_API_KEY }}" \
+          PROJECT_ID=$(curl -s -H "Authorization: Bearer $NEON_API_KEY" \
             "https://console.neon.tech/api/v2/projects" | \
             python3 -c "import sys,json; projects=json.load(sys.stdin)['projects']; matches=[p for p in projects if p['name']=='$NEON_PROJECT_NAME']; print(matches[0]['id'] if matches else '')")
 
@@ -79,7 +81,7 @@ jobs:
           fi
 
           # Get connection URI
-          DATABASE_URL=$(curl -s -H "Authorization: Bearer ${{ secrets.NEON_API_KEY }}" \
+          DATABASE_URL=$(curl -s -H "Authorization: Bearer $NEON_API_KEY" \
             "https://console.neon.tech/api/v2/projects/$PROJECT_ID/connection_uri?role_name=neondb_owner&database_name=neondb" | \
             python3 -c "import sys,json; print(json.load(sys.stdin)['uri'])")
 
