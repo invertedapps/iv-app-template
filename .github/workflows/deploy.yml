@@ -14,8 +14,4 @@ jobs:
     uses: invertedapps/iv-app-template/.github/workflows/deploy-shared.yml@main
     with:
       force_deploy: ${{ inputs.force_deploy || false }}
-    secrets:
-      GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
-      NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
-      PLATFORM_JWT_SECRET: ${{ secrets.PLATFORM_JWT_SECRET }}
-      GCP_SA_EMAIL: ${{ secrets.GCP_SA_EMAIL }}
+    secrets: inherit
