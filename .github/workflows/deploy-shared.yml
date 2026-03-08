@@ -27,19 +27,24 @@ jobs:
       app_slug: ${{ steps.derive.outputs.app_slug }}
       cloud_run_service: ${{ steps.derive.outputs.cloud_run_service }}
       app_api_url: ${{ steps.derive.outputs.app_api_url }}
-      skip: ${{ steps.guard.outputs.skip }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Check for deploy credentials
-        id: guard
+      - name: Check deploy credentials
         run: |
+          echo "Checking secrets availability..."
+          echo "GCP_SA_KEY length: ${#GCP_KEY}"
+          echo "NEON_API_KEY length: ${#NEON_KEY}"
+          echo "PLATFORM_JWT_SECRET length: ${#JWT_KEY}"
           if [ -z "$GCP_KEY" ]; then
-            echo "⏭️ No GCP_SA_KEY secret — skipping deployment"
-            echo "skip=true" >> $GITHUB_OUTPUT
+            echo "⚠️ GCP_SA_KEY is empty — deploy-api and deploy-frontends will fail"
+          else
+            echo "✅ GCP_SA_KEY is set"
           fi
         env:
           GCP_KEY: ${{ secrets.GCP_SA_KEY }}
+          NEON_KEY: ${{ secrets.NEON_API_KEY }}
+          JWT_KEY: ${{ secrets.PLATFORM_JWT_SECRET }}
 
       - name: Derive app config from repo name
         id: derive
@@ -85,7 +90,7 @@ jobs:
   # Deploy API to Cloud Run
   deploy-api:
     needs: setup
-    if: needs.setup.outputs.api == 'true' && needs.setup.outputs.skip != 'true'
+    if: needs.setup.outputs.api == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -167,7 +172,7 @@ jobs:
   # Build and deploy frontends (desktop, mobile, admin) to GCS
   deploy-frontends:
     needs: setup
-    if: needs.setup.outputs.frontend == 'true' && needs.setup.outputs.skip != 'true'
+    if: needs.setup.outputs.frontend == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -208,7 +213,7 @@ jobs:
   # Deploy workers as Cloud Functions
   deploy-workers:
     needs: setup
-    if: needs.setup.outputs.workers == 'true' && needs.setup.outputs.skip != 'true'
+    if: needs.setup.outputs.workers == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
