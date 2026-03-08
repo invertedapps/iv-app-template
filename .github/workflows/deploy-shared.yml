@@ -1,17 +1,6 @@
 name: Deploy (Shared)
 on:
   workflow_call:
-    secrets:
-      GCP_SA_KEY:
-        required: false
-      PLATFORM_JWT_SECRET:
-        required: false
-      NEON_API_KEY:
-        required: false
-
-env:
-  APP_SLUG: ""
-  CLOUD_RUN_SERVICE: ""
 
 jobs:
   # Determine which components changed and derive app config
