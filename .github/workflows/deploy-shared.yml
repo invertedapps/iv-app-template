@@ -1,0 +1,226 @@
+name: Deploy (Shared)
+on:
+  workflow_call:
+    secrets:
+      GCP_SA_KEY:
+        required: false
+      PLATFORM_JWT_SECRET:
+        required: false
+      NEON_API_KEY:
+        required: false
+
+env:
+  APP_SLUG: ""
+  CLOUD_RUN_SERVICE: ""
+
+jobs:
+  # Determine which components changed and derive app config
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      api: ${{ steps.filter.outputs.api }}
+      frontend: ${{ steps.filter.outputs.frontend }}
+      workers: ${{ steps.filter.outputs.workers }}
+      app_slug: ${{ steps.derive.outputs.app_slug }}
+      cloud_run_service: ${{ steps.derive.outputs.cloud_run_service }}
+      skip: ${{ steps.guard.outputs.skip }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check for deploy credentials
+        id: guard
+        run: |
+          if [ -z "$GCP_KEY" ]; then
+            echo "⏭️ No GCP_SA_KEY secret — skipping deployment"
+            echo "skip=true" >> $GITHUB_OUTPUT
+          fi
+        env:
+          GCP_KEY: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Derive app config from repo name
+        id: derive
+        run: |
+          REPO_NAME="${GITHUB_REPOSITORY#*/}"
+          SLUG="${REPO_NAME#iv-app-}"
+          echo "app_slug=$SLUG" >> $GITHUB_OUTPUT
+          echo "cloud_run_service=$REPO_NAME" >> $GITHUB_OUTPUT
+          echo "📦 App slug: $SLUG"
+          echo "🚀 Cloud Run service: $REPO_NAME"
+
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            api:
+              - 'apps/api/**'
+            frontend:
+              - 'apps/desktop/**'
+            workers:
+              - 'workers/**'
+              - 'workers.yaml'
+
+  # Deploy API to Cloud Run
+  deploy-api:
+    needs: setup
+    if: needs.setup.outputs.api == 'true' && needs.setup.outputs.skip != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Fetch DATABASE_URL from Neon
+        id: neon
+        run: |
+          NEON_PROJECT_NAME="iv-app-${{ needs.setup.outputs.app_slug }}"
+          echo "Looking up Neon project: $NEON_PROJECT_NAME"
+
+          # Find the project by name
+          PROJECT_ID=$(curl -s -H "Authorization: Bearer ${{ secrets.NEON_API_KEY }}" \
+            "https://console.neon.tech/api/v2/projects" | \
+            python3 -c "import sys,json; projects=json.load(sys.stdin)['projects']; matches=[p for p in projects if p['name']=='$NEON_PROJECT_NAME']; print(matches[0]['id'] if matches else '')")
+
+          if [ -z "$PROJECT_ID" ]; then
+            echo "❌ Neon project '$NEON_PROJECT_NAME' not found"
+            exit 1
+          fi
+
+          # Get connection URI
+          DATABASE_URL=$(curl -s -H "Authorization: Bearer ${{ secrets.NEON_API_KEY }}" \
+            "https://console.neon.tech/api/v2/projects/$PROJECT_ID/connection_uri?role_name=neondb_owner&database_name=neondb" | \
+            python3 -c "import sys,json; print(json.load(sys.stdin)['uri'])")
+
+          echo "::add-mask::$DATABASE_URL"
+          echo "database_url=$DATABASE_URL" >> $GITHUB_OUTPUT
+          echo "✅ Got DATABASE_URL from Neon"
+
+      - name: Deploy to Cloud Run
+        run: |
+          gcloud run deploy ${{ needs.setup.outputs.cloud_run_service }} \
+            --source apps/api \
+            --project ${{ vars.GCP_PROJECT_ID }} \
+            --region ${{ vars.GCP_REGION }} \
+            --allow-unauthenticated \
+            --set-env-vars DATABASE_URL=${{ steps.neon.outputs.database_url }} \
+            --set-env-vars PLATFORM_JWT_SECRET=${{ secrets.PLATFORM_JWT_SECRET }} \
+            --set-env-vars APP_SLUG=${{ needs.setup.outputs.app_slug }} \
+            --min-instances 0 \
+            --max-instances 5
+
+  # Build and deploy frontend to GCS
+  deploy-frontend:
+    needs: setup
+    if: needs.setup.outputs.frontend == 'true' && needs.setup.outputs.skip != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with: { node-version: '20' }
+
+      - name: Install and build
+        run: |
+          pnpm install
+          pnpm --filter @app/desktop build
+
+      - uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - uses: google-github-actions/upload-cloud-storage@v2
+        with:
+          path: apps/desktop/dist
+          destination: ${{ vars.GCS_BUCKET }}/${{ needs.setup.outputs.app_slug }}
+          parent: false
+
+  # Deploy workers as Cloud Functions
+  deploy-workers:
+    needs: setup
+    if: needs.setup.outputs.workers == 'true' && needs.setup.outputs.skip != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with: { node-version: '20' }
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Deploy workers
+        run: |
+          if ! command -v yq &> /dev/null; then
+            sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+            sudo chmod +x /usr/local/bin/yq
+          fi
+
+          WORKER_COUNT=$(yq '.workers | length' workers.yaml)
+          if [ "$WORKER_COUNT" = "0" ] || [ "$WORKER_COUNT" = "null" ]; then
+            echo "No workers defined in workers.yaml — skipping"
+            exit 0
+          fi
+
+          APP_SLUG="${{ needs.setup.outputs.app_slug }}"
+          for i in $(seq 0 $(($WORKER_COUNT - 1))); do
+            NAME=$(yq ".workers[$i].name" workers.yaml)
+            SCHEDULE=$(yq ".workers[$i].schedule" workers.yaml)
+            HANDLER=$(yq ".workers[$i].handler" workers.yaml)
+            TIMEOUT=$(yq ".workers[$i].timeout // \"60s\"" workers.yaml)
+            MEMORY=$(yq ".workers[$i].memory // \"256Mi\"" workers.yaml)
+
+            FUNC_NAME="${APP_SLUG}-${NAME}"
+            echo "Deploying worker: ${FUNC_NAME}"
+
+            npx esbuild "${HANDLER}" --bundle --platform=node --target=node20 --outfile="dist-workers/${NAME}/index.js"
+
+            # Fetch DATABASE_URL from Neon
+            NEON_PROJECT_NAME="iv-app-${APP_SLUG}"
+            PROJECT_ID=$(curl -s -H "Authorization: Bearer ${{ secrets.NEON_API_KEY }}" \
+              "https://console.neon.tech/api/v2/projects" | \
+              python3 -c "import sys,json; projects=json.load(sys.stdin)['projects']; matches=[p for p in projects if p['name']=='$NEON_PROJECT_NAME']; print(matches[0]['id'] if matches else '')")
+            DATABASE_URL=$(curl -s -H "Authorization: Bearer ${{ secrets.NEON_API_KEY }}" \
+              "https://console.neon.tech/api/v2/projects/$PROJECT_ID/connection_uri?role_name=neondb_owner&database_name=neondb" | \
+              python3 -c "import sys,json; print(json.load(sys.stdin)['uri'])")
+
+            gcloud functions deploy "${FUNC_NAME}" \
+              --gen2 \
+              --runtime=nodejs20 \
+              --trigger-http \
+              --source="dist-workers/${NAME}" \
+              --entry-point=handler \
+              --project=${{ vars.GCP_PROJECT_ID }} \
+              --region=${{ vars.GCP_REGION }} \
+              --memory="${MEMORY}" \
+              --timeout="${TIMEOUT}" \
+              --set-env-vars DATABASE_URL=$DATABASE_URL \
+              --set-env-vars PLATFORM_JWT_SECRET=${{ secrets.PLATFORM_JWT_SECRET }} \
+              --no-allow-unauthenticated
+
+            gcloud scheduler jobs update http "${FUNC_NAME}-schedule" \
+              --location=${{ vars.GCP_REGION }} \
+              --schedule="${SCHEDULE}" \
+              --uri="$(gcloud functions describe ${FUNC_NAME} --gen2 --region=${{ vars.GCP_REGION }} --format='value(serviceConfig.uri)')" \
+              --oidc-service-account-email="${{ secrets.GCP_SA_EMAIL }}" \
+              2>/dev/null || \
+            gcloud scheduler jobs create http "${FUNC_NAME}-schedule" \
+              --location=${{ vars.GCP_REGION }} \
+              --schedule="${SCHEDULE}" \
+              --uri="$(gcloud functions describe ${FUNC_NAME} --gen2 --region=${{ vars.GCP_REGION }} --format='value(serviceConfig.uri)')" \
+              --oidc-service-account-email="${{ secrets.GCP_SA_EMAIL }}"
+
+            echo "✅ Worker ${NAME} deployed and scheduled"
+          done
