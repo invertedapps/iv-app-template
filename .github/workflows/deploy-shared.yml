@@ -1,15 +1,20 @@
 name: Deploy (Shared)
 on:
   workflow_call:
+    inputs:
+      force_deploy:
+        description: 'Deploy all components regardless of file changes'
+        type: boolean
+        default: false
 
 jobs:
   # Determine which components changed and derive app config
   setup:
     runs-on: ubuntu-latest
     outputs:
-      api: ${{ steps.filter.outputs.api }}
-      frontend: ${{ steps.filter.outputs.frontend }}
-      workers: ${{ steps.filter.outputs.workers }}
+      api: ${{ steps.changes.outputs.api }}
+      frontend: ${{ steps.changes.outputs.frontend }}
+      workers: ${{ steps.changes.outputs.workers }}
       app_slug: ${{ steps.derive.outputs.app_slug }}
       cloud_run_service: ${{ steps.derive.outputs.cloud_run_service }}
       app_api_url: ${{ steps.derive.outputs.app_api_url }}
@@ -41,6 +46,7 @@ jobs:
           echo "🌐 App API URL: $APP_API_URL"
 
       - uses: dorny/paths-filter@v3
+        if: ${{ !inputs.force_deploy }}
         id: filter
         with:
           filters: |
@@ -53,6 +59,19 @@ jobs:
             workers:
               - 'workers/**'
               - 'workers.yaml'
+
+      - name: Set change outputs
+        id: changes
+        run: |
+          if [ "${{ inputs.force_deploy }}" = "true" ]; then
+            echo "api=true" >> $GITHUB_OUTPUT
+            echo "frontend=true" >> $GITHUB_OUTPUT
+            echo "workers=true" >> $GITHUB_OUTPUT
+          else
+            echo "api=${{ steps.filter.outputs.api }}" >> $GITHUB_OUTPUT
+            echo "frontend=${{ steps.filter.outputs.frontend }}" >> $GITHUB_OUTPUT
+            echo "workers=${{ steps.filter.outputs.workers }}" >> $GITHUB_OUTPUT
+          fi
 
   # Deploy API to Cloud Run
   deploy-api:
@@ -136,8 +155,8 @@ jobs:
             --min-instances 0 \
             --max-instances 5
 
-  # Build and deploy frontend (desktop) to GCS
-  deploy-frontend:
+  # Build and deploy frontends (desktop, mobile, admin) to GCS
+  deploy-frontends:
     needs: setup
     if: needs.setup.outputs.frontend == 'true' && needs.setup.outputs.skip != 'true'
     runs-on: ubuntu-latest

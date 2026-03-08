@@ -3,8 +3,15 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      force_deploy:
+        description: 'Deploy all components regardless of file changes'
+        type: boolean
+        default: false
 
 jobs:
   deploy:
     uses: invertedapps/iv-app-template/.github/workflows/deploy-shared.yml@main
+    with:
+      force_deploy: ${{ inputs.force_deploy || false }}
     secrets: inherit
