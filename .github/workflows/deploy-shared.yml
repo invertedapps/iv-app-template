@@ -65,13 +65,11 @@ jobs:
       - name: Fetch DATABASE_URL from Neon
         id: neon
         env:
-          NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
-          JWT_CHECK: ${{ secrets.PLATFORM_JWT_SECRET }}
-          GCP_CHECK: ${{ secrets.GCP_SA_KEY }}
+          NEON_API_KEY: ${{ secrets.NEON_KEY }}
+          NEON_API_KEY_OLD: ${{ secrets.NEON_API_KEY }}
         run: |
-          echo "DEBUG NEON_API_KEY length: ${#NEON_API_KEY}"
-          echo "DEBUG JWT_CHECK length: ${#JWT_CHECK}"
-          echo "DEBUG GCP_CHECK length: ${#GCP_CHECK}"
+          echo "DEBUG NEON_KEY (new) length: ${#NEON_API_KEY}"
+          echo "DEBUG NEON_API_KEY (old) length: ${#NEON_API_KEY_OLD}"
           NEON_PROJECT_NAME="iv-app-${{ needs.setup.outputs.app_slug }}"
           echo "Looking up Neon project: $NEON_PROJECT_NAME"
 
